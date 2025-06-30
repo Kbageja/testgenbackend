@@ -1,5 +1,5 @@
 import express from 'express';
-import { createTest, evaluateTestAttempt, getAttemptedTestsByCreator, getPublicTests, getResultById, getTestById, getTestsByCreator } from '../controllers/createTest.js';
+import { createTest, evaluateTestAttempt, getAttemptedTestsByCreator, getPublicTests, getResultById, getTestById, getTestsByCreator, getUserTestStats } from '../controllers/createTest.js';
 import { requireAuth } from '../middleware/requireAuth.js';
 
 const router = express.Router();
@@ -12,4 +12,5 @@ router.get('/getResult',requireAuth,getResultById);
 router.get('/getMyTest',requireAuth,getTestsByCreator);
 router.get('/getPublicTests',requireAuth,getPublicTests);
 router.get('/getAttempted',requireAuth,getAttemptedTestsByCreator);
+router.get('/getStats',requireAuth,getUserTestStats);
 export default router;

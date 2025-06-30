@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { geminiModel, generateQuestions } from '../utils/gemini.js';
+import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, subHours } from 'date-fns';
 
 const prisma = new PrismaClient();
 
@@ -268,26 +269,36 @@ export const getTestsByCreator = async (req, res) => {
     // Step 2: Fetch tests where creatorId = dbUser.id
     const tests = await prisma.testTemplate.findMany({
       where: { creatorId: dbUser.id },
+      include: {
+        attempts: {
+          select: {
+            id: true, // Just to count
+          },
+        },
+      },
     });
 
-    res.status(200).json(tests);
+    // Step 3: Add attemptsCount
+    const testsWithDetails = tests.map((test) => ({
+      ...test,
+      attemptsCount: test.attempts.length,
+    }));
+
+    // ✅ Use the enriched data
+    res.status(200).json(testsWithDetails);
   } catch (err) {
     console.error('Error fetching user-created tests:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
-
 export const getAttemptedTestsByCreator = async (req, res) => {
   try {
     const clerkUserId = req.auth?.userId;
-
-    console.log(clerkUserId);
 
     if (!clerkUserId) {
       return res.status(401).json({ error: 'Unauthorized: Missing Clerk user ID' });
     }
 
-    // Step 1: Find the user in your database
     const dbUser = await prisma.user.findUnique({
       where: { clerkId: clerkUserId },
     });
@@ -295,14 +306,18 @@ export const getAttemptedTestsByCreator = async (req, res) => {
     if (!dbUser) {
       return res.status(404).json({ error: 'User not found in database' });
     }
-    console.log(dbUser.id,"dbuser.id")
 
-    // Step 2: Fetch tests where creatorId = dbUser.id
+    // ✅ Include user to get clerkId in response
     const tests = await prisma.testAttempt.findMany({
       where: { userId: dbUser.id },
+      include: {
+        user: {
+          select: {
+            clerkId: true,
+          },
+        },
+      },
     });
-
-    console.log(tests,"attemptedtests")
 
     res.status(200).json(tests);
   } catch (err) {
@@ -313,15 +328,139 @@ export const getAttemptedTestsByCreator = async (req, res) => {
 
 export const getPublicTests = async (req, res) => {
   try {
+    // Fetch all public tests with creator name
     const tests = await prisma.testTemplate.findMany({
       where: {
         isPublic: true,
       },
+      include: {
+        creator: {
+          select: {
+            name: true,
+          },
+        },
+        attempts: {
+          select: {
+            id: true, // Just to count, we only need id
+          },
+        },
+      },
     });
 
-    res.status(200).json(tests);
+    // Add attempts count and creatorName
+    const testsWithDetails = tests.map((test) => ({
+      ...test,
+      creatorName: test.creator?.name || 'Unknown',
+      attemptsCount: test.attempts.length,
+    }));
+
+    res.status(200).json(testsWithDetails);
   } catch (err) {
     console.error('Error fetching public tests:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+export const getUserTestStats = async (req, res) => {
+  try {
+    const clerkUserId = req.auth?.userId;
+
+    if (!clerkUserId) {
+      return res.status(401).json({ error: 'Unauthorized: Missing Clerk user ID' });
+    }
+
+    const dbUser = await prisma.user.findUnique({
+      where: { clerkId: clerkUserId },
+    });
+
+    if (!dbUser) {
+      return res.status(404).json({ error: 'User not found in database' });
+    }
+
+    const userId = dbUser.id;
+
+    // 1. Get all tests created by this user
+    const allTests = await prisma.testTemplate.findMany({
+      where: { creatorId: userId },
+      select: { id: true, createdAt: true },
+    });
+
+    const totalTests = allTests.length;
+
+    const testsThisWeek = allTests.filter(
+      (test) =>
+        test.createdAt >= startOfWeek(new Date()) &&
+        test.createdAt <= endOfWeek(new Date())
+    ).length;
+
+    const testIds = allTests.map((t) => t.id);
+
+    // 2. Get all attempts made on these tests
+    const allAttempts = await prisma.testAttempt.findMany({
+      where: { testId: { in: testIds } },
+      select: {
+        id: true,
+        testId: true,
+        testTitle: true,
+        submittedAt: true,
+        score: true,
+        totalMarks: true,
+      },
+      orderBy: { submittedAt: 'desc' },
+    });
+
+    const totalAttempts = allAttempts.length;
+
+    const attemptsThisWeek = allAttempts.filter(
+      (a) =>
+        a.submittedAt >= startOfWeek(new Date()) &&
+        a.submittedAt <= endOfWeek(new Date())
+    ).length;
+
+    const currentMonthAttempts = allAttempts.filter(
+      (a) =>
+        a.submittedAt >= startOfMonth(new Date()) &&
+        a.submittedAt <= endOfMonth(new Date())
+    );
+
+    const percentageScores = currentMonthAttempts.map((a) => {
+      if (!a.totalMarks || a.totalMarks === 0) return 0;
+      return (a.score / a.totalMarks) * 100;
+    });
+
+    const averageScoreThisMonth = percentageScores.length
+      ? Math.round(
+          percentageScores.reduce((sum, p) => sum + p, 0) / percentageScores.length
+        )
+      : 0;
+
+    const recentActivity = allAttempts.filter(
+      (a) => a.submittedAt >= subHours(new Date(), 24)
+    ).length;
+
+    const recentTests = allAttempts.slice(0, 3).map((a) => ({
+      id: a.id, // Attempt ID
+      testId: a.testId,
+      testTitle: a.testTitle,
+      score: a.score,
+      totalMarks: a.totalMarks,
+      submittedAt: a.submittedAt,
+    }));
+
+    res.status(200).json({
+      totalTests,
+      testsThisWeek,
+      totalAttempts,
+      attemptsThisWeek,
+      averageScoreThisMonth,
+      recentActivity,
+      recentTests,
+    });
+  } catch (err) {
+    console.error('Error in getUserTestStats:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+
+
+
