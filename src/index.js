@@ -1,20 +1,21 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import cors from 'cors'; // ✅ Import CORS
+import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
 import clerkMiddleware from './middleware/clerkAuth.js';
 import testRoutes from './routes/testRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import webhookRoutes from "./routes/webHookRoutes.js"
 
 dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
 
-// ✅ Enable CORS with specific origin (frontend URL)
+// ✅ Enable CORS
 const allowedOrigins = [
   'http://localhost:5173',
-  'https://testmaker-omega.vercel.app', // Explicitly add your frontend URL
+  'https://testmaker-omega.vercel.app',
   process.env.FRONTEND_URL
 ];
 
@@ -23,8 +24,17 @@ app.use(cors({
   credentials: true,
 }));
 
+// 🚨 CRITICAL: Webhook routes MUST come BEFORE express.json() and clerkMiddleware
+// Webhooks need raw body parsing, not JSON parsing
+app.use('/api/webhooks', webhookRoutes);
+
+// ✅ JSON parsing for non-webhook routes
 app.use(express.json());
+
+// ✅ Clerk middleware for protected routes (not webhooks)
 app.use(clerkMiddleware);
+
+// ✅ Protected routes
 app.use('/api/tests', testRoutes);
 app.use('/api/auth', userRoutes);
 
