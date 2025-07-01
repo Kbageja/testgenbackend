@@ -1,10 +1,12 @@
-// routes/webHookRoutes.js - Complete webhook implementation
 import express from 'express';
 import { Webhook } from 'svix';
 import { PrismaClient } from '@prisma/client';
 
 const router = express.Router();
 const prisma = new PrismaClient();
+
+// Raw body parser middleware for webhooks - MUST be applied to specific route
+const rawBodyParser = express.raw({ type: 'application/json' });
 
 // Middleware to verify webhook signature
 const verifyWebhook = (req, res, next) => {
@@ -51,10 +53,7 @@ const verifyWebhook = (req, res, next) => {
   next();
 };
 
-// Raw body parser middleware for webhooks - MUST be first
-const rawBodyParser = express.raw({ type: 'application/json' });
-
-// Webhook handler
+// 🔥 MAIN WEBHOOK ENDPOINT - This handles POST requests
 router.post('/clerk', rawBodyParser, verifyWebhook, async (req, res) => {
   const { type, data } = req.evt;
   
@@ -81,6 +80,15 @@ router.post('/clerk', rawBodyParser, verifyWebhook, async (req, res) => {
     console.error('❌ Error processing webhook:', error);
     res.status(500).json({ error: 'Webhook processing failed' });
   }
+});
+
+// 🔥 ADD GET ENDPOINT FOR TESTING - This fixes the "Cannot GET" error
+router.get('/clerk', (req, res) => {
+  res.status(200).json({ 
+    message: 'Clerk webhook endpoint is active',
+    timestamp: new Date().toISOString(),
+    methods: ['POST']
+  });
 });
 
 // Handler functions
