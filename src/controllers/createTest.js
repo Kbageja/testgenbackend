@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { geminiModel, generateQuestions } from '../utils/gemini.js';
 import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, subHours } from 'date-fns';
 
+
 const prisma = new PrismaClient();
 
 export const createTest = async (req, res) => {
@@ -396,20 +397,18 @@ export const getUserTestStats = async (req, res) => {
     const userId = dbUser.id;
     console.log('📊 Fetching stats for userId:', userId);
 
-    // UTC timezone handling
-    const timezone = 'UTC';
+    // UTC timezone handling - simplified approach
     const now = new Date();
-    const utcNow = zonedTimeToUtc(now, timezone);
     
-    // Calculate date ranges in UTC
-    const weekStartUTC = startOfWeek(utcNow, { weekStartsOn: 1 }); // Monday start
-    const weekEndUTC = endOfWeek(utcNow, { weekStartsOn: 1 });
-    const monthStartUTC = startOfMonth(utcNow);
-    const monthEndUTC = endOfMonth(utcNow);
-    const last24HoursUTC = subHours(utcNow, 24);
+    // Calculate date ranges in UTC (dates are already in UTC when stored in DB)
+    const weekStartUTC = startOfWeek(now, { weekStartsOn: 1 }); // Monday start
+    const weekEndUTC = endOfWeek(now, { weekStartsOn: 1 });
+    const monthStartUTC = startOfMonth(now);
+    const monthEndUTC = endOfMonth(now);
+    const last24HoursUTC = subHours(now, 24);
 
-    console.log('🗓️ UTC Date ranges:', {
-      now: utcNow.toISOString(),
+    console.log('🗓️ Date ranges:', {
+      now: now.toISOString(),
       weekStart: weekStartUTC.toISOString(),
       weekEnd: weekEndUTC.toISOString(),
       monthStart: monthStartUTC.toISOString(),
@@ -552,8 +551,7 @@ export const getUserTestStats = async (req, res) => {
       debug: {
         userId,
         clerkUserId,
-        timestamp: utcNow.toISOString(),
-        timezone,
+        timestamp: now.toISOString(),
         dateRanges: {
           weekStart: weekStartUTC.toISOString(),
           weekEnd: weekEndUTC.toISOString(),
@@ -581,6 +579,7 @@ export const getUserTestStats = async (req, res) => {
     res.status(500).json({ 
       error: 'Internal server error',
       message: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 };
