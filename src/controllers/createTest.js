@@ -362,43 +362,104 @@ export const getPublicTests = async (req, res) => {
 };
 export const getUserTestStats = async (req, res) => {
   try {
+    // Enhanced auth validation
     const clerkUserId = req.auth?.userId;
-
+    
     if (!clerkUserId) {
-      return res.status(401).json({ error: 'Unauthorized: Missing Clerk user ID' });
+      console.error('❌ Auth failed - no userId in req.auth:', req.auth);
+      return res.status(401).json({ 
+        error: 'Unauthorized: Missing Clerk user ID',
+        authStatus: 'failed'
+      });
     }
 
+    console.log('✅ Auth successful for user:', clerkUserId);
+
+    // Force fresh database connection
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      console.log('🔄 Database connection refreshed');
+    } catch (dbError) {
+      console.error('❌ Database connection failed:', dbError);
+    }
+
+    // Find user with error handling
     const dbUser = await prisma.user.findUnique({
       where: { clerkId: clerkUserId },
     });
 
     if (!dbUser) {
+      console.error('❌ User not found in database for clerkId:', clerkUserId);
       return res.status(404).json({ error: 'User not found in database' });
     }
 
     const userId = dbUser.id;
+    console.log('📊 Fetching stats for userId:', userId);
 
-    // ⏳ Fetch all tests and test IDs in one transaction
-    const [allTests] = await prisma.$transaction([
-      prisma.testTemplate.findMany({
-        where: { creatorId: userId },
-        select: { id: true, createdAt: true },
-      }),
-    ]);
+    // UTC timezone handling
+    const timezone = 'UTC';
+    const now = new Date();
+    const utcNow = zonedTimeToUtc(now, timezone);
+    
+    // Calculate date ranges in UTC
+    const weekStartUTC = startOfWeek(utcNow, { weekStartsOn: 1 }); // Monday start
+    const weekEndUTC = endOfWeek(utcNow, { weekStartsOn: 1 });
+    const monthStartUTC = startOfMonth(utcNow);
+    const monthEndUTC = endOfMonth(utcNow);
+    const last24HoursUTC = subHours(utcNow, 24);
+
+    console.log('🗓️ UTC Date ranges:', {
+      now: utcNow.toISOString(),
+      weekStart: weekStartUTC.toISOString(),
+      weekEnd: weekEndUTC.toISOString(),
+      monthStart: monthStartUTC.toISOString(),
+      monthEnd: monthEndUTC.toISOString(),
+      last24Hours: last24HoursUTC.toISOString()
+    });
+
+    // Force fresh queries by using $queryRaw for critical data
+    console.log('🔍 Executing fresh database queries...');
+
+    // Fetch all tests with fresh query
+    const allTests = await prisma.testTemplate.findMany({
+      where: { creatorId: userId },
+      select: { 
+        id: true, 
+        createdAt: true, 
+        title: true,
+        updatedAt: true 
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    console.log('📝 Found tests:', allTests.length);
+    console.log('📝 Test details:', allTests.map(t => ({
+      id: t.id,
+      title: t.title,
+      createdAt: t.createdAt.toISOString(),
+      updatedAt: t.updatedAt?.toISOString()
+    })));
 
     const totalTests = allTests.length;
-
+    
+    // Filter tests for this week using UTC
     const testsThisWeek = allTests.filter(
-      (test) =>
-        test.createdAt >= startOfWeek(new Date()) &&
-        test.createdAt <= endOfWeek(new Date())
-    ).length;
+      (test) => test.createdAt >= weekStartUTC && test.createdAt <= weekEndUTC
+    );
+    
+    console.log('📅 Tests this week:', testsThisWeek.length, testsThisWeek.map(t => ({
+      title: t.title,
+      createdAt: t.createdAt.toISOString()
+    })));
 
     const testIds = allTests.map((t) => t.id);
+    console.log('🔍 Test IDs to search for attempts:', testIds);
 
-    // 🧾 Fetch attempts in a separate transaction to ensure testIds are populated
-    const [allAttempts] = await prisma.$transaction([
-      prisma.testAttempt.findMany({
+    // Skip attempts query if no tests exist
+    let allAttempts = [];
+    if (testIds.length > 0) {
+      // Fetch attempts with fresh query
+      allAttempts = await prisma.testAttempt.findMany({
         where: { testId: { in: testIds } },
         select: {
           id: true,
@@ -407,28 +468,47 @@ export const getUserTestStats = async (req, res) => {
           submittedAt: true,
           score: true,
           totalMarks: true,
+          userId: true
         },
         orderBy: { submittedAt: 'desc' },
-      }),
-    ]);
+      });
+
+      console.log('📊 Found attempts:', allAttempts.length);
+      console.log('📊 Attempt details:', allAttempts.map(a => ({
+        id: a.id,
+        testTitle: a.testTitle,
+        score: a.score,
+        totalMarks: a.totalMarks,
+        submittedAt: a.submittedAt.toISOString(),
+        userId: a.userId
+      })));
+    } else {
+      console.log('📊 No tests found, skipping attempts query');
+    }
 
     const totalAttempts = allAttempts.length;
-
+    
+    // Filter attempts for this week using UTC
     const attemptsThisWeek = allAttempts.filter(
-      (a) =>
-        a.submittedAt >= startOfWeek(new Date()) &&
-        a.submittedAt <= endOfWeek(new Date())
-    ).length;
-
-    const currentMonthAttempts = allAttempts.filter(
-      (a) =>
-        a.submittedAt >= startOfMonth(new Date()) &&
-        a.submittedAt <= endOfMonth(new Date())
+      (a) => a.submittedAt >= weekStartUTC && a.submittedAt <= weekEndUTC
     );
+    console.log('📅 Attempts this week:', attemptsThisWeek.length);
 
+    // Filter attempts for this month using UTC
+    const currentMonthAttempts = allAttempts.filter(
+      (a) => a.submittedAt >= monthStartUTC && a.submittedAt <= monthEndUTC
+    );
+    console.log('📅 Attempts this month:', currentMonthAttempts.length);
+
+    // Calculate percentage scores
     const percentageScores = currentMonthAttempts.map((a) => {
-      if (!a.totalMarks || a.totalMarks === 0) return 0;
-      return (a.score / a.totalMarks) * 100;
+      if (!a.totalMarks || a.totalMarks === 0) {
+        console.log(`⚠️ Invalid totalMarks for attempt ${a.id}: ${a.totalMarks}`);
+        return 0;
+      }
+      const percentage = (a.score / a.totalMarks) * 100;
+      console.log(`💯 Score calculation for ${a.testTitle}: ${a.score}/${a.totalMarks} = ${percentage.toFixed(2)}%`);
+      return percentage;
     });
 
     const averageScoreThisMonth = percentageScores.length
@@ -437,31 +517,71 @@ export const getUserTestStats = async (req, res) => {
         )
       : 0;
 
-    const recentActivity = allAttempts.filter(
-      (a) => a.submittedAt >= subHours(new Date(), 24)
-    ).length;
+    console.log('📈 Average score calculation:', {
+      percentageScores: percentageScores.map(p => Math.round(p)),
+      sum: percentageScores.reduce((sum, p) => sum + p, 0),
+      count: percentageScores.length,
+      average: averageScoreThisMonth
+    });
 
+    // Recent activity (last 24 hours) using UTC
+    const recentActivity = allAttempts.filter(
+      (a) => a.submittedAt >= last24HoursUTC
+    ).length;
+    console.log('⏰ Recent activity (24h):', recentActivity);
+
+    // Recent tests (last 3 attempts)
     const recentTests = allAttempts.slice(0, 3).map((a) => ({
-      id: a.id, // Attempt ID
+      id: a.id,
       testId: a.testId,
       testTitle: a.testTitle,
       score: a.score,
       totalMarks: a.totalMarks,
       submittedAt: a.submittedAt,
+      percentage: a.totalMarks > 0 ? Math.round((a.score / a.totalMarks) * 100) : 0
     }));
 
-    res.status(200).json({
+    const response = {
       totalTests,
-      testsThisWeek,
+      testsThisWeek: testsThisWeek.length,
       totalAttempts,
-      attemptsThisWeek,
+      attemptsThisWeek: attemptsThisWeek.length,
       averageScoreThisMonth,
       recentActivity,
       recentTests,
-    });
+      debug: {
+        userId,
+        clerkUserId,
+        timestamp: utcNow.toISOString(),
+        timezone,
+        dateRanges: {
+          weekStart: weekStartUTC.toISOString(),
+          weekEnd: weekEndUTC.toISOString(),
+          monthStart: monthStartUTC.toISOString(),
+          monthEnd: monthEndUTC.toISOString(),
+          last24Hours: last24HoursUTC.toISOString()
+        },
+        rawData: {
+          allTestsCount: allTests.length,
+          allAttemptsCount: allAttempts.length,
+          testsThisWeekCount: testsThisWeek.length,
+          attemptsThisWeekCount: attemptsThisWeek.length,
+          currentMonthAttemptsCount: currentMonthAttempts.length,
+          percentageScores: percentageScores.map(p => Math.round(p))
+        }
+      }
+    };
+
+    console.log('📤 Final response:', JSON.stringify(response, null, 2));
+    res.status(200).json(response);
+
   } catch (err) {
-    console.error('Error in getUserTestStats:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('❌ Error in getUserTestStats:', err);
+    console.error('❌ Error stack:', err.stack);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: err.message,
+    });
   }
 };
 
