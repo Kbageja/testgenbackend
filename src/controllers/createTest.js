@@ -446,6 +446,14 @@ export const getUserTestStats = async (req, res) => {
       submittedAt: a.submittedAt,
     }));
 
+    console.log(totalTests,
+      testsThisWeek,
+      totalAttempts,
+      attemptsThisWeek,
+      averageScoreThisMonth,
+      recentActivity,
+      recentTests,"##")
+
     res.status(200).json({
       totalTests,
       testsThisWeek,
