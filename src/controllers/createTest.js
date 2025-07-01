@@ -378,11 +378,13 @@ export const getUserTestStats = async (req, res) => {
 
     const userId = dbUser.id;
 
-    // 1. Get all tests created by this user
-    const allTests = await prisma.testTemplate.findMany({
-      where: { creatorId: userId },
-      select: { id: true, createdAt: true },
-    });
+    // ⏳ Fetch all tests and test IDs in one transaction
+    const [allTests] = await prisma.$transaction([
+      prisma.testTemplate.findMany({
+        where: { creatorId: userId },
+        select: { id: true, createdAt: true },
+      }),
+    ]);
 
     const totalTests = allTests.length;
 
@@ -394,19 +396,21 @@ export const getUserTestStats = async (req, res) => {
 
     const testIds = allTests.map((t) => t.id);
 
-    // 2. Get all attempts made on these tests
-    const allAttempts = await prisma.testAttempt.findMany({
-      where: { testId: { in: testIds } },
-      select: {
-        id: true,
-        testId: true,
-        testTitle: true,
-        submittedAt: true,
-        score: true,
-        totalMarks: true,
-      },
-      orderBy: { submittedAt: 'desc' },
-    });
+    // 🧾 Fetch attempts in a separate transaction to ensure testIds are populated
+    const [allAttempts] = await prisma.$transaction([
+      prisma.testAttempt.findMany({
+        where: { testId: { in: testIds } },
+        select: {
+          id: true,
+          testId: true,
+          testTitle: true,
+          submittedAt: true,
+          score: true,
+          totalMarks: true,
+        },
+        orderBy: { submittedAt: 'desc' },
+      }),
+    ]);
 
     const totalAttempts = allAttempts.length;
 
@@ -446,14 +450,6 @@ export const getUserTestStats = async (req, res) => {
       submittedAt: a.submittedAt,
     }));
 
-    console.log(totalTests,
-      testsThisWeek,
-      totalAttempts,
-      attemptsThisWeek,
-      averageScoreThisMonth,
-      recentActivity,
-      recentTests,"##")
-
     res.status(200).json({
       totalTests,
       testsThisWeek,
@@ -468,6 +464,7 @@ export const getUserTestStats = async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
 
 
 
