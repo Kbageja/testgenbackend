@@ -9,8 +9,8 @@ router.post('/evaluate', requireAuth, evaluateTestAttempt);
 router.get('/getTests',requireAuth,getTestById)
 
 router.get('/getResult',requireAuth,getResultById);
-router.get('/getTests/:id', requireAuth, getTestById);
-router.get('/getMyTest/:id', requireAuth, getTestsByCreator);
-router.get('/getAttempted/:id', requireAuth, getAttemptedTestsByCreator);
+router.get('/getMyTest',requireAuth,getTestsByCreator);
+router.get('/getPublicTests',requireAuth,getPublicTests);
+router.get('/getAttempted',requireAuth,getAttemptedTestsByCreator);
 router.get('/getStats',requireAuth,getUserTestStats);
 export default router;
