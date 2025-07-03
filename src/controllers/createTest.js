@@ -320,7 +320,21 @@ export const getAttemptedTestsByCreator = async (req, res) => {
       },
     });
 
-    res.status(200).json(tests);
+    // ✅ Add score2 field to each test attempt
+    const testsWithScore2 = tests.map(test => {
+      // Calculate score2 as sum of marksAwarded from feedback
+      const score2 = test.feedback ? 
+        test.feedback.reduce((sum, feedbackItem) => {
+          return sum + (feedbackItem.marksAwarded || 0);
+        }, 0) : 0;
+
+      return {
+        ...test,
+        score2
+      };
+    });
+
+    res.status(200).json(testsWithScore2);
   } catch (err) {
     console.error('Error fetching user-created tests:', err);
     res.status(500).json({ error: 'Internal server error' });
